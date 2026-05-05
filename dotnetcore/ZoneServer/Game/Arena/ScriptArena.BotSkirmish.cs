@@ -21,6 +21,7 @@ namespace InfServer.Game
         private int _botSkirmishReactionDelayMs = 350;
         private int _botSkirmishDetectRange = 1200;
         private int _botSkirmishAimJitter = 20;
+        private const int BotSkirmishSpreadRadius = 220;
 
         private class BotSkirmishBrainState
         {
@@ -39,13 +40,16 @@ namespace InfServer.Game
             if (!_botSkirmishEnabled)
                 return;
 
-            try { _botSkirmishEnabled = _server._config["bots/enabled"].boolValue; } catch { }
-            try { _botSkirmishCount = Math.Max(1, _server._config["bots/count"].intValue); } catch { }
-            try { _botSkirmishTeam = _server._config["bots/team"].intValue; } catch { }
-            try { _botSkirmishNamePrefix = _server._config["bots/namePrefix"].Value; } catch { }
-            try { _botSkirmishRespawnDelayMs = Math.Max(500, _server._config["bots/respawnDelayMs"].intValue); } catch { }
-            try { _botSkirmishDifficulty = _server._config["bots/difficulty"].Value; } catch { }
-            try { _botSkirmishVehicleId = _server._config["bots/vehicleId"].intValue; } catch { }
+            _botSkirmishEnabled = readBotBool("bots/enabled", _botSkirmishEnabled);
+            _botSkirmishCount = Math.Max(1, readBotInt("bots/count", _botSkirmishCount));
+            _botSkirmishTeam = readBotInt("bots/team", _botSkirmishTeam);
+            _botSkirmishNamePrefix = readBotString("bots/namePrefix", _botSkirmishNamePrefix);
+            _botSkirmishRespawnDelayMs = Math.Max(500, readBotInt("bots/respawnMs", _botSkirmishRespawnDelayMs));
+            _botSkirmishDifficulty = readBotString("bots/difficulty", _botSkirmishDifficulty);
+            _botSkirmishVehicleId = readBotInt("bots/vehicleId", _botSkirmishVehicleId);
+            _botSkirmishDetectRange = Math.Max(200, readBotInt("bots/detectRange", _botSkirmishDetectRange));
+            _botSkirmishReactionDelayMs = Math.Max(100, readBotInt("bots/reactionDelayMs", _botSkirmishReactionDelayMs));
+            _botSkirmishAimJitter = Math.Max(0, readBotInt("bots/aimJitter", _botSkirmishAimJitter));
 
             applyDifficultyTuning();
             Log.write(TLog.Normal, $"[BotSkirmish] initialized enabled={_botSkirmishEnabled} count={_botSkirmishCount} team={_botSkirmishTeam} prefix={_botSkirmishNamePrefix} respawnMs={_botSkirmishRespawnDelayMs} difficulty={_botSkirmishDifficulty}");
@@ -54,18 +58,23 @@ namespace InfServer.Game
         private void applyDifficultyTuning()
         {
             string difficulty = (_botSkirmishDifficulty ?? string.Empty).Trim().ToLowerInvariant();
+            if (difficulty == "normal" || string.IsNullOrWhiteSpace(difficulty))
+                return;
+
             if (difficulty == "easy")
             {
-                _botSkirmishReactionDelayMs = 650;
-                _botSkirmishDetectRange = 900;
-                _botSkirmishAimJitter = 40;
+                _botSkirmishReactionDelayMs = Math.Max(_botSkirmishReactionDelayMs, 650);
+                _botSkirmishDetectRange = Math.Min(_botSkirmishDetectRange, 900);
+                _botSkirmishAimJitter = Math.Max(_botSkirmishAimJitter, 40);
             }
             else if (difficulty == "hard")
             {
-                _botSkirmishReactionDelayMs = 150;
-                _botSkirmishDetectRange = 1600;
-                _botSkirmishAimJitter = 8;
+                _botSkirmishReactionDelayMs = Math.Min(_botSkirmishReactionDelayMs, 150);
+                _botSkirmishDetectRange = Math.Max(_botSkirmishDetectRange, 1600);
+                _botSkirmishAimJitter = Math.Min(_botSkirmishAimJitter, 8);
             }
+            else
+                Log.write(TLog.Warning, $"[BotSkirmish] invalid difficulty '{_botSkirmishDifficulty}', using configured timing/range/jitter values.");
         }
 
         private void ensureBotSkirmishBootstrap()
@@ -84,16 +93,15 @@ namespace InfServer.Game
             if (seed == null)
                 return;
 
+            Log.write(TLog.Normal, $"[BotSkirmish] spawning {_botSkirmishCount} bot(s).");
             for (int i = 0; i < _botSkirmishCount; i++)
-                spawnSingleSkirmishBot(team, seed, i);
+                spawnSingleSkirmishBot(team, seed, i, _botSkirmishCount);
         }
 
-        private void spawnSingleSkirmishBot(Team team, Player seed, int offset)
+        private void spawnSingleSkirmishBot(Team team, Player seed, int index, int total)
         {
             Helpers.ObjectState state = new Helpers.ObjectState();
-            state.positionX = (short)(seed._state.positionX + offset * 40);
-            state.positionY = (short)(seed._state.positionY + offset * 40);
-            state.yaw = (byte)(_rand.Next(0, 40) + offset * 20);
+            getBotSpawnState(seed, index, total, state);
 
             Bot bot = newBot(typeof(Bot), (ushort)_botSkirmishVehicleId, team, null, state);
             if (bot == null)
@@ -135,6 +143,18 @@ namespace InfServer.Game
             }
 
             Log.write(TLog.Warning, $"[BotSkirmish] bot id={bot._id} has no valid projectile weapon equipped.");
+        }
+        private bool isValidBotTarget(Bot bot, Player player)
+        {
+            if (bot == null || player == null)
+                return false;
+            if (player._bSpectator || player._bDisconnected || player.IsDead)
+                return false;
+            if (player._team == null || bot._team == null || player._team == bot._team)
+                return false;
+            if (player._state == null || player._occupiedVehicle == null && player._state.positionX == 0 && player._state.positionY == 0)
+                return false;
+            return true;
         }
 
         private void onBotSkirmishBotKilled(Bot dead, Player killer, int weaponID)
@@ -178,12 +198,12 @@ namespace InfServer.Game
                 else if (now - brain.LastMoveTick > 1800)
                 {
                     brain.HasDesiredYaw = true;
-                    brain.DesiredYaw = (byte)_rand.Next(0, 255);
+                    brain.DesiredYaw = (byte)_rand.Next(0, 240);
                     brain.LastMoveTick = now;
                 }
 
                 Player target = getPlayersInRange(bot._state.positionX, bot._state.positionY, _botSkirmishDetectRange, true)
-                    .Where(p => p != null && p._team != bot._team)
+                    .Where(p => isValidBotTarget(bot, p))
                     .OrderBy(p => Helpers.distanceTo(p._state, bot._state))
                     .FirstOrDefault();
 
@@ -193,7 +213,7 @@ namespace InfServer.Game
                     {
                         brain.NextDecisionTick = now + _rand.Next(350, 900);
                         brain.HasDesiredYaw = true;
-                        brain.DesiredYaw = (byte)_rand.Next(0, 255);
+                        brain.DesiredYaw = (byte)_rand.Next(0, 240);
                     }
 
                     if (brain.HasDesiredYaw)
@@ -225,7 +245,10 @@ namespace InfServer.Game
                 if (aimed && bot._weapon.ableToFire() && brain.NextFireTick <= now)
                 {
                     int jitter = _rand.Next(-_botSkirmishAimJitter, _botSkirmishAimJitter + 1);
-                    byte shotYaw = (byte)(bot._state.yaw + jitter);
+                    int rawYaw = bot._state.yaw + jitter;
+                    while (rawYaw < 0)
+                        rawYaw += 240;
+                    byte shotYaw = (byte)(rawYaw % 240);
                     bot._itemUseID = bot._weapon.ItemID;
                     bot._weapon.shotFired();
                     handleBotFire(bot, shotYaw);
@@ -242,10 +265,40 @@ namespace InfServer.Game
 
                 _botSkirmishPendingRespawns.Remove(deadId);
                 if (seed != null)
-                    spawnSingleSkirmishBot(team, seed, _botSkirmishSequence + 1);
+                    spawnSingleSkirmishBot(team, seed, _botSkirmishSequence % Math.Max(1, _botSkirmishCount), Math.Max(1, _botSkirmishCount));
 
                 Log.write(TLog.Normal, $"[BotSkirmish] bot respawned deadId={deadId}");
             }
+        }
+
+        private bool readBotBool(string key, bool fallback)
+        {
+            try { return _server._config[key].boolValue; }
+            catch { Log.write(TLog.Warning, $"[BotSkirmish] invalid config '{key}', using fallback '{fallback}'."); return fallback; }
+        }
+        private int readBotInt(string key, int fallback)
+        {
+            try { return _server._config[key].intValue; }
+            catch { Log.write(TLog.Warning, $"[BotSkirmish] invalid config '{key}', using fallback '{fallback}'."); return fallback; }
+        }
+        private string readBotString(string key, string fallback)
+        {
+            try { return _server._config[key].Value; }
+            catch { Log.write(TLog.Warning, $"[BotSkirmish] invalid config '{key}', using fallback '{fallback}'."); return fallback; }
+        }
+
+        private void getBotSpawnState(Player seed, int index, int total, Helpers.ObjectState state)
+        {
+            short baseX = seed._state.positionX;
+            short baseY = seed._state.positionY;
+            int safeTotal = Math.Max(1, total);
+            double angle = (2.0 * Math.PI * index) / safeTotal;
+            int radius = Math.Min(BotSkirmishSpreadRadius, 60 + (index % 4) * 35);
+            int x = baseX + (int)(Math.Cos(angle) * radius);
+            int y = baseY + (int)(Math.Sin(angle) * radius);
+            state.positionX = (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, x));
+            state.positionY = (short)Math.Max(short.MinValue, Math.Min(short.MaxValue, y));
+            state.yaw = (byte)_rand.Next(0, 240);
         }
     }
 }
