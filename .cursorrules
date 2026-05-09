@@ -1,0 +1,9 @@
+# Lessons
+
+## Cursor Cloud Agent
+
+- This repository declares **`.cursor/environment.json`** with an **`install`** hook so Cursor Cloud Agent runs **`scripts/cursor-cloud-init.sh`** when the environment is prepared. That script idempotently installs **.NET SDK 8.x** to **`~/.dotnet`** (via Microsoft’s `dotnet-install.sh`) and appends **`DOTNET_ROOT`** / **`PATH`** to **`~/.bashrc`**. Prefer relying on that instead of ad-hoc `apt install` in agents.
+
+# Scratchpad
+
+(Empty — clear per task.)
