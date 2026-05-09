@@ -21,6 +21,10 @@ namespace InfServer.Game
         private int _botSkirmishReactionDelayMs = 350;
         private int _botSkirmishDetectRange = 1200;
         private int _botSkirmishAimJitter = 20;
+        private bool _botSkirmishObjectiveEnabled;
+        private short _botSkirmishObjectiveX;
+        private short _botSkirmishObjectiveY;
+        private int _botSkirmishObjectiveRadius = 220;
 
         private class BotSkirmishBrainState
         {
@@ -46,9 +50,78 @@ namespace InfServer.Game
             try { _botSkirmishRespawnDelayMs = Math.Max(500, _server._config["bots/respawnDelayMs"].intValue); } catch { }
             try { _botSkirmishDifficulty = _server._config["bots/difficulty"].Value; } catch { }
             try { _botSkirmishVehicleId = _server._config["bots/vehicleId"].intValue; } catch { }
+            try { _botSkirmishObjectiveEnabled = _server._config["bots/objectiveEnabled"].boolValue; } catch { }
+            try { _botSkirmishObjectiveX = (short)_server._config["bots/objectiveX"].intValue; } catch { }
+            try { _botSkirmishObjectiveY = (short)_server._config["bots/objectiveY"].intValue; } catch { }
+            try { _botSkirmishObjectiveRadius = Math.Max(80, _server._config["bots/objectiveRadius"].intValue); } catch { }
 
             applyDifficultyTuning();
             Log.write(TLog.Normal, $"[BotSkirmish] initialized enabled={_botSkirmishEnabled} count={_botSkirmishCount} team={_botSkirmishTeam} prefix={_botSkirmishNamePrefix} respawnMs={_botSkirmishRespawnDelayMs} difficulty={_botSkirmishDifficulty}");
+        }
+
+        private bool isBlockedAt(int x, int y)
+        {
+            if (x < 16 || y < 16 || x >= (_levelWidth * 16) - 16 || y >= (_levelHeight * 16) - 16)
+                return true;
+
+            return getTile(x, y).Blocked;
+        }
+
+        private bool shouldAvoidForwardTerrain(Bot bot)
+        {
+            const double yawToRad = Math.PI / 20.0;
+            double angle = bot._state.yaw * yawToRad;
+            int probeDistance = 42;
+            int probeX = bot._state.positionX + (int)(Math.Cos(angle) * probeDistance);
+            int probeY = bot._state.positionY + (int)(Math.Sin(angle) * probeDistance);
+            return isBlockedAt(probeX, probeY);
+        }
+
+        private bool moveTowardObjective(Bot bot, BotSkirmishBrainState brain, int now)
+        {
+            if (!_botSkirmishObjectiveEnabled || (_botSkirmishObjectiveX == 0 && _botSkirmishObjectiveY == 0))
+                return false;
+
+            int dx = _botSkirmishObjectiveX - bot._state.positionX;
+            int dy = _botSkirmishObjectiveY - bot._state.positionY;
+            int distSq = (dx * dx) + (dy * dy);
+            if (distSq <= _botSkirmishObjectiveRadius * _botSkirmishObjectiveRadius)
+            {
+                if (brain.NextDecisionTick <= now)
+                {
+                    brain.NextDecisionTick = now + _rand.Next(250, 600);
+                    if (_rand.Next(0, 100) < 75)
+                        bot._movement.stop();
+                    else
+                        bot._movement.thrustForward();
+                }
+                return true;
+            }
+
+            int targetYaw = (int)(Math.Atan2(dy, dx) * (20.0 / Math.PI));
+            if (targetYaw < 0)
+                targetYaw += 40;
+            byte desiredYaw = (byte)(targetYaw % 40);
+
+            if (bot._state.yaw != desiredYaw)
+            {
+                if (((byte)(desiredYaw - bot._state.yaw)) < 128)
+                    bot._movement.rotateRight();
+                else
+                    bot._movement.rotateLeft();
+            }
+
+            if (shouldAvoidForwardTerrain(bot))
+            {
+                if (_rand.Next(0, 2) == 0)
+                    bot._movement.rotateLeft();
+                else
+                    bot._movement.rotateRight();
+            }
+            else
+                bot._movement.thrustForward();
+
+            return true;
         }
 
         private void applyDifficultyTuning()
@@ -189,6 +262,9 @@ namespace InfServer.Game
 
                 if (target == null)
                 {
+                    if (moveTowardObjective(bot, brain, now))
+                        continue;
+
                     if (brain.NextDecisionTick <= now)
                     {
                         brain.NextDecisionTick = now + _rand.Next(350, 900);
@@ -221,7 +297,15 @@ namespace InfServer.Game
                 else
                     bot._movement.rotateLeft();
 
-                bot._movement.thrustForward();
+                if (shouldAvoidForwardTerrain(bot))
+                {
+                    if (_rand.Next(0, 100) < 50)
+                        bot._movement.rotateLeft();
+                    else
+                        bot._movement.rotateRight();
+                }
+                else
+                    bot._movement.thrustForward();
                 if (aimed && bot._weapon.ableToFire() && brain.NextFireTick <= now)
                 {
                     int jitter = _rand.Next(-_botSkirmishAimJitter, _botSkirmishAimJitter + 1);
