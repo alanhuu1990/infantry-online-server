@@ -19,7 +19,7 @@ namespace InfServer.Game
     // ScriptArena Class
     /// Exposes the arena methodology to scripting
     ///////////////////////////////////////////////////////
-    public class ScriptArena : Arena
+    public partial class ScriptArena : Arena
     {	// Member variables
         ///////////////////////////////////////////////////
         private List<Scripts.IScript> _scripts;		//The scripts we're currently supporting
@@ -58,6 +58,8 @@ namespace InfServer.Game
             //Run initial hides if it doesn't depend on a game running
             if (!_startCfg.initialHides)
                 initialHideSpawns();
+
+            initBotSkirmishSupport();
         }
 
         /// <summary>
@@ -97,6 +99,8 @@ namespace InfServer.Game
         public override void poll()
         {	//Process the base state
             base.poll();
+
+            pollBotSkirmishSupport();
 
             //Do we have a script loaded?
             if (_scriptType == null)
@@ -1029,6 +1033,7 @@ namespace InfServer.Game
             }
             else
             {
+                ensureBotSkirmishBootstrap();
                 //Are we locked in spec?
                 if (from._bLocked || from._arena._bLocked)
                 {
@@ -2939,6 +2944,7 @@ namespace InfServer.Game
             if (!exists("Bot.Death") || (bool)callsync("Bot.Death", false, dead, killer, weaponID))
             {	//Route the death to the arena
                 Helpers.Vehicle_RouteDeath(Players, killer, dead, null);
+                onBotSkirmishBotKilled(dead, killer, weaponID);
                 if (killer != null && dead._team != killer._team)
                 {//Don't allow rewards for team kills
                     Logic_Rewards.calculateBotKillRewards(dead, killer);
