@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using InfServer.Bots;
+using InfServer.Protocol;
+using Assets;
 
 namespace InfServer.Game
 {
@@ -152,7 +154,7 @@ namespace InfServer.Game
 
         private void spawnBotSkirmishBots()
         {
-            Team team = getTeamByFreq(_botSkirmishTeam) ?? _specTeam;
+            Team team = getTeamByID(_botSkirmishTeam) ?? getTeamByName("spec");
             Player seed = PlayersIngame.FirstOrDefault();
             if (seed == null)
                 return;
@@ -312,13 +314,13 @@ namespace InfServer.Game
                     byte shotYaw = (byte)(bot._state.yaw + jitter);
                     bot._itemUseID = bot._weapon.ItemID;
                     bot._weapon.shotFired();
-                    handleBotFire(bot, shotYaw);
+                    bot._state.yaw = shotYaw;
                     brain.NextFireTick = now + _botSkirmishReactionDelayMs;
                 }
             }
 
             Player seed = PlayersIngame.FirstOrDefault();
-            Team team = getTeamByFreq(_botSkirmishTeam) ?? _specTeam;
+            Team team = getTeamByID(_botSkirmishTeam) ?? getTeamByName("spec");
             foreach (ushort deadId in _botSkirmishPendingRespawns.Keys.ToList())
             {
                 if (_botSkirmishPendingRespawns[deadId] > now)
