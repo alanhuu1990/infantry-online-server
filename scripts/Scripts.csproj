@@ -186,6 +186,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Bots\DuelBot\DuelBot.cs" />
+    <Compile Include="Bots\TacticalDuelBot\TacticalDuelBot.cs" />
     <Compile Include="Bots\FollowBot\FollowBot.cs" />
     <Compile Include="Bots\TeamBot\TeamBot.cs" />
     <Compile Include="GameTypes\AxiCTF\ZonePoll.cs" />

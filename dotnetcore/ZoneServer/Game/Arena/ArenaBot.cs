@@ -210,6 +210,23 @@ namespace InfServer.Game
         }
 
         /// <summary>
+        /// Returns bots near a point (optionally excluding dead bots).
+        /// </summary>
+        public List<Bot> getBotsInRange(int posX, int posY, int range, bool notDead)
+        {
+            List<Bot> result = new List<Bot>();
+            foreach (Bot b in _bots.getObjsInRange(posX, posY, range))
+            {
+                if (b == null)
+                    continue;
+                if (notDead && b.IsDead)
+                    continue;
+                result.Add(b);
+            }
+            return result;
+        }
+
+        /// <summary>
         /// Determines whether there is a bot antiwarping the player in the specified area
         /// </summary>
         public Bot checkBotAntiwarp(Player player)

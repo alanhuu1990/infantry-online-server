@@ -171,6 +171,31 @@ namespace InfServer.Scripting
 				_invokerScripts[type.name] = scripts;
 			}
 
+			// Register InfServer.Script.<Name> invokers that are not game types and are missing or empty in scripts.xml
+			var autoInvokerScripts = new Dictionary<string, List<Type>>(StringComparer.OrdinalIgnoreCase);
+			foreach (Type inter in interfaces)
+			{
+				if (inter.Namespace == null || !inter.Namespace.StartsWith("InfServer.Script.", StringComparison.Ordinal))
+					continue;
+				string[] nsParts = inter.Namespace.Split('.');
+				if (nsParts.Length < 3)
+					continue;
+				string invokerName = nsParts[2];
+				if (invokerName.StartsWith("GameType_", StringComparison.OrdinalIgnoreCase))
+					continue;
+				if (!autoInvokerScripts.TryGetValue(invokerName, out List<Type> bucket))
+				{
+					bucket = new List<Type>();
+					autoInvokerScripts[invokerName] = bucket;
+				}
+				bucket.Add(inter);
+			}
+			foreach (KeyValuePair<string, List<Type>> kv in autoInvokerScripts)
+			{
+				if (!_invokerScripts.TryGetValue(kv.Key, out List<Type> existing) || existing == null || existing.Count == 0)
+					_invokerScripts[kv.Key] = kv.Value;
+			}
+
 			//Add scripts for a purely default environment
 			//Start our list of script interfaces
 			List<Type> defaultScripts = new List<Type>();

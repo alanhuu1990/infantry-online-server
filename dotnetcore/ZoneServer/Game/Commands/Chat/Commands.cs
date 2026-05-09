@@ -733,21 +733,21 @@ namespace InfServer.Game.Commands.Chat
 
         #region duelbot
         /// <summary>
-        /// Spawns a duel bot at your location or a specified location. NOTE: Duelbots are zone based setups
+        /// Shared spawn path for script-driven duel chassis bots in private arenas.
         /// </summary>
-        public static void duelbot(Player player, Player recipient, string payload, int bong)
+        private static void spawnPrivateArenaDuelBot(Player player, string payload, string scriptInvoker, string cmdName)
         {
             if (String.IsNullOrWhiteSpace(payload))
             {
-                player.sendMessage(-1, "Error in command: type ?duelbot options for an example");
+                player.sendMessage(-1, "Error in command: type ?" + cmdName + " options for an example");
                 return;
             }
 
             if (payload.Contains("options"))
             {
-                player.sendMessage(-1, "Syntax: ?duelbot <id>");
-                player.sendMessage(0, "Optional: ?duelbot <id> [location] (Ex: ?duelbot A4 or ?duelbot 451,443)");
-                player.sendMessage(0, "To see a list of available bots, type: ?duelbot list");
+                player.sendMessage(-1, "Syntax: ?" + cmdName + " <id>");
+                player.sendMessage(0, "Optional: ?" + cmdName + " <id> [location] (Ex: ?" + cmdName + " A4 or ?" + cmdName + " 451,443)");
+                player.sendMessage(0, "To see a list of available bots, type: ?" + cmdName + " list");
                 return;
             }
 
@@ -758,36 +758,35 @@ namespace InfServer.Game.Commands.Chat
                 return;
             }
 
-            Dictionary<int, string> CurrentBots = null;
+            Dictionary<int, string> currentBots = null;
             foreach (Assets.VehInfo veh in vehicles)
             {
-                if (veh.Name.ToLower().Contains("(d)") || veh.Name.ToLower().Contains("duelbot"))
+                string nameLower = veh.Name.ToLower();
+                if (nameLower.Contains("(d)") || nameLower.Contains("duelbot"))
                 {
-                    if (CurrentBots == null)
-                    { CurrentBots = new Dictionary<int, string>(); }
-                    CurrentBots.Add(veh.Id, veh.Name);
+                    if (currentBots == null)
+                        currentBots = new Dictionary<int, string>();
+                    currentBots.Add(veh.Id, veh.Name);
                 }
             }
 
             if (payload.Contains("list"))
             {
-                if (CurrentBots == null)
+                if (currentBots == null)
                 {
                     player.sendMessage(-1, "There are no dueling bots in this zone.");
                     return;
                 }
 
                 player.sendMessage(0, "Current bot listing:");
-                foreach(KeyValuePair<int,string> bot in CurrentBots)
-                {
+                foreach (KeyValuePair<int, string> bot in currentBots)
                     player.sendMessage(0, string.Format("[{0}] {1}", bot.Key, bot.Value));
-                }
                 return;
             }
 
-            if (!Scripting.Scripts.invokerTypeExists("DuelBot"))
+            if (!Scripting.Scripts.invokerTypeExists(scriptInvoker))
             {
-                player.sendMessage(-1, "Script type doesn't exist, cannot spawn a duelbot.");
+                player.sendMessage(-1, "Script type doesn't exist, cannot spawn this bot.");
                 return;
             }
 
@@ -805,76 +804,86 @@ namespace InfServer.Game.Commands.Chat
             }
 
             if (player._arena._botsInArena >= 20)
-            { //Arena starts lagging after 20
+            {
                 player.sendMessage(-1, "Bot limit for this command reached.");
                 return;
             }
 
             string[] command = payload.Split(' ');
             int id;
-            //Is it a valid number?
             if (!int.TryParse(command[0], out id))
             {
-                player.sendMessage(-1, "That is not a valid bot id. Type ?duelbot list to see them.");
+                player.sendMessage(-1, "That is not a valid bot id. Type ?" + cmdName + " list to see them.");
                 return;
             }
 
-            //Does it exist?
-            if (!CurrentBots.ContainsKey(id))
+            if (currentBots == null || !currentBots.ContainsKey(id))
             {
-                player.sendMessage(-1, "That is not a valid bot id. Type ?duelbot list to see them.");
+                player.sendMessage(-1, "That is not a valid bot id. Type ?" + cmdName + " list to see them.");
                 return;
             }
-            //Set bot state
+
             Protocol.Helpers.ObjectState newState = new Protocol.Helpers.ObjectState();
             int x = player._state.positionX;
             int y = player._state.positionY;
 
-            //Are they just spawning it on top of themselves?
             if (command.Length > 1)
-            { //Nope
+            {
                 if (payload.Contains(","))
                 {
-                    //Exact coords
                     string[] args = command[1].Split(',');
                     if (args.Count() > 1 && !String.IsNullOrWhiteSpace(args[1]))
-                    {   //Yes, parse it
+                    {
                         x = Convert.ToInt32(args[0].Trim()) * 16;
                         y = Convert.ToInt32(args[1].Trim()) * 16;
                     }
                     else
                     {
-                        player.sendMessage(-1, "Syntax: ?duelbot <id> [location]");
-                        player.sendMessage(0, "Example: ?duelbot <id> 453,341 OR ?duelbot <id> A4");
+                        player.sendMessage(-1, "Syntax: ?" + cmdName + " <id> [location]");
+                        player.sendMessage(0, "Example: ?" + cmdName + " <id> 453,341 OR ?" + cmdName + " <id> A4");
                         return;
                     }
                 }
                 else
-                {   //No, map point
+                {
                     string coord = command[1].Trim().ToLower();
                     if (coord[0] >= 'a' && coord[0] <= 'z' && coord.Length > 1)
                     {
                         x = (((int)coord[0]) - ((int)'a')) * 16 * 80;
                         y = Convert.ToInt32(coord.Substring(1)) * 16 * 80;
-
-                        //We want to spawn in the coord center
                         x += 40 * 16;
                         y -= 40 * 16;
                     }
                     else
                     {
-                        player.sendMessage(-1, "Syntax: ?duelbot <id> [location]");
-                        player.sendMessage(0, "Example: ?duelbot <id> 453,341 OR ?duelbot <id> A4");
+                        player.sendMessage(-1, "Syntax: ?" + cmdName + " <id> [location]");
+                        player.sendMessage(0, "Example: ?" + cmdName + " <id> 453,341 OR ?" + cmdName + " <id> A4");
                         return;
                     }
                 }
             }
-            //Spawn it
+
             newState.positionX = (short)x;
             newState.positionY = (short)y;
-            newState.positionZ = 0; //People could spawn them while flying and they would stay in the air
+            newState.positionZ = 0;
             newState.yaw = player._state.yaw;
-            Bots.Bot newBot = player._arena.newBot(typeof(Bots.ScriptBot), (ushort)id, newState, "DuelBot");
+            player._arena.newBot(typeof(Bots.ScriptBot), (ushort)id, newState, scriptInvoker);
+        }
+
+        /// <summary>
+        /// Spawns a duel bot at your location or a specified location. NOTE: Duelbots are zone based setups
+        /// </summary>
+        public static void duelbot(Player player, Player recipient, string payload, int bong)
+        {
+            spawnPrivateArenaDuelBot(player, payload, "DuelBot", "duelbot");
+        }
+
+        /// <summary>
+        /// Spawns a tactical duel bot (hostile players and bots) in a private arena.
+        /// </summary>
+        public static void tacticalduelbot(Player player, Player recipient, string payload, int bong)
+        {
+            spawnPrivateArenaDuelBot(player, payload, "TacticalDuelBot", "tacticalduelbot");
         }
         #endregion
 
@@ -1944,6 +1953,10 @@ namespace InfServer.Game.Commands.Chat
             yield return new HandlerDescriptor(summon, "summon",
                 "Ignores summons from the specified player(s)",
                 "?summon Player1,Player2,Player3");
+
+            yield return new HandlerDescriptor(tacticalduelbot, "tacticalduelbot",
+                "Spawns a tactical duelbot (PvP + bot combat)",
+                "?tacticalduelbot <id> OR ?tacticalduelbot <id> [location]");
 
             yield return new HandlerDescriptor(team, "team",
                 "Displays a list of teams or joins a specified team",
