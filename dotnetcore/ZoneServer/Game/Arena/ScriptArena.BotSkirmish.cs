@@ -27,6 +27,9 @@ namespace InfServer.Game
         private short _botSkirmishObjectiveX;
         private short _botSkirmishObjectiveY;
         private int _botSkirmishObjectiveRadius = 220;
+        private int _botSkirmishSquadSpacing = 180;
+        private int _botSkirmishAttachDistance = 950;
+        private int _botSkirmishAttachCooldownMs = 1800;
 
         private class BotSkirmishBrainState
         {
@@ -37,6 +40,8 @@ namespace InfServer.Game
             public byte DesiredYaw;
             public bool HasDesiredYaw;
             public int NextFireTick;
+            public ushort LeaderId;
+            public int NextAttachTick;
         }
 
         private void initBotSkirmishSupport()
@@ -56,6 +61,9 @@ namespace InfServer.Game
             try { _botSkirmishObjectiveX = (short)_server._config["bots/objectiveX"].intValue; } catch { }
             try { _botSkirmishObjectiveY = (short)_server._config["bots/objectiveY"].intValue; } catch { }
             try { _botSkirmishObjectiveRadius = Math.Max(80, _server._config["bots/objectiveRadius"].intValue); } catch { }
+            try { _botSkirmishSquadSpacing = Math.Max(80, _server._config["bots/squadSpacing"].intValue); } catch { }
+            try { _botSkirmishAttachDistance = Math.Max(350, _server._config["bots/attachDistance"].intValue); } catch { }
+            try { _botSkirmishAttachCooldownMs = Math.Max(600, _server._config["bots/attachCooldownMs"].intValue); } catch { }
 
             applyDifficultyTuning();
             Log.write(TLog.Normal, $"[BotSkirmish] initialized enabled={_botSkirmishEnabled} count={_botSkirmishCount} team={_botSkirmishTeam} prefix={_botSkirmishNamePrefix} respawnMs={_botSkirmishRespawnDelayMs} difficulty={_botSkirmishDifficulty}");
@@ -182,7 +190,8 @@ namespace InfServer.Game
                 LastY = bot._state.positionY,
                 LastMoveTick = Environment.TickCount,
                 NextDecisionTick = Environment.TickCount,
-                NextFireTick = Environment.TickCount + _botSkirmishReactionDelayMs
+                NextFireTick = Environment.TickCount + _botSkirmishReactionDelayMs,
+                NextAttachTick = Environment.TickCount + _rand.Next(400, 1000)
             };
 
             Log.write(TLog.Normal, $"[BotSkirmish] bot created id={bot._id} name={_botSkirmishNamePrefix}{_botSkirmishSequence}");
@@ -256,6 +265,11 @@ namespace InfServer.Game
                     brain.DesiredYaw = (byte)_rand.Next(0, 255);
                     brain.LastMoveTick = now;
                 }
+
+                Bot squadLeader = getSquadLeader(bot, brain);
+                bool didAttach = maintainSquadAttachSummon(bot, brain, squadLeader, now);
+                if (didAttach)
+                    continue;
 
                 Player target = getPlayersInRange(bot._state.positionX, bot._state.positionY, _botSkirmishDetectRange, true)
                     .Where(p => p != null && p._team != bot._team)
@@ -332,6 +346,65 @@ namespace InfServer.Game
 
                 Log.write(TLog.Normal, $"[BotSkirmish] bot respawned deadId={deadId}");
             }
+        }
+
+        private Bot getSquadLeader(Bot bot, BotSkirmishBrainState brain)
+        {
+            if (bot == null)
+                return null;
+
+            Bot leader = null;
+            if (brain.LeaderId != 0)
+                leader = _bots.FirstOrDefault(b => b != null && b._id == brain.LeaderId && !b.IsDead);
+
+            if (leader != null && leader != bot)
+                return leader;
+
+            leader = _bots
+                .Where(b => b != null && !b.IsDead && b != bot && b._team == bot._team)
+                .OrderBy(b => Helpers.distanceTo(bot._state, b._state))
+                .FirstOrDefault();
+
+            brain.LeaderId = (leader == null) ? (ushort)0 : leader._id;
+            return leader;
+        }
+
+        private bool maintainSquadAttachSummon(Bot bot, BotSkirmishBrainState brain, Bot leader, int now)
+        {
+            if (bot == null || leader == null || leader == bot)
+                return false;
+
+            double distance = Helpers.distanceTo(bot._state, leader._state);
+            if (distance > _botSkirmishAttachDistance && brain.NextAttachTick <= now)
+            {
+                Helpers.ObjectState attach = bot._state;
+                attach.positionX = (short)(leader._state.positionX + _rand.Next(-_botSkirmishSquadSpacing, _botSkirmishSquadSpacing + 1));
+                attach.positionY = (short)(leader._state.positionY + _rand.Next(-_botSkirmishSquadSpacing, _botSkirmishSquadSpacing + 1));
+                if (!isBlockedAt(attach.positionX, attach.positionY))
+                {
+                    bot._movement.warp(attach);
+                    brain.LastX = attach.positionX;
+                    brain.LastY = attach.positionY;
+                    brain.LastMoveTick = now;
+                    brain.NextAttachTick = now + _botSkirmishAttachCooldownMs;
+                    return true;
+                }
+            }
+
+            if (distance > _botSkirmishSquadSpacing)
+            {
+                bool shouldTurnRight = (byte)(leader._state.yaw - bot._state.yaw) < 128;
+                if (shouldTurnRight)
+                    bot._movement.rotateRight();
+                else
+                    bot._movement.rotateLeft();
+
+                if (!shouldAvoidForwardTerrain(bot))
+                    bot._movement.thrustForward();
+                return true;
+            }
+
+            return false;
         }
     }
 }
