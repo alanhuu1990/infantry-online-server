@@ -4,6 +4,7 @@ using System.Linq;
 using InfServer.Bots;
 using InfServer.Protocol;
 using Assets;
+using Axiom.Math;
 
 namespace InfServer.Game
 {
@@ -77,13 +78,27 @@ namespace InfServer.Game
             return getTile(x, y).Blocked;
         }
 
+        private static void rotateShortestArcToward(Bot bot, byte desiredYawRaw)
+        {
+            int target = desiredYawRaw % 240;
+            int cur = bot._state.yaw % 240;
+            int diff = target - cur;
+            if (diff > 120)
+                diff -= 240;
+            if (diff < -120)
+                diff += 240;
+            if (diff > 0)
+                bot._movement.rotateRight();
+            else if (diff < 0)
+                bot._movement.rotateLeft();
+        }
+
         private bool shouldAvoidForwardTerrain(Bot bot)
         {
-            const double yawToRad = Math.PI / 20.0;
-            double angle = bot._state.yaw * yawToRad;
-            int probeDistance = 42;
-            int probeX = bot._state.positionX + (int)(Math.Cos(angle) * probeDistance);
-            int probeY = bot._state.positionY + (int)(Math.Sin(angle) * probeDistance);
+            const int probeDistance = 42;
+            Vector2 forward = Vector2.createUnitVector(bot._state.yaw);
+            int probeX = bot._state.positionX + (int)(forward.x * probeDistance);
+            int probeY = bot._state.positionY + (int)(forward.y * probeDistance);
             return isBlockedAt(probeX, probeY);
         }
 
@@ -97,6 +112,7 @@ namespace InfServer.Game
             int distSq = (dx * dx) + (dy * dy);
             if (distSq <= _botSkirmishObjectiveRadius * _botSkirmishObjectiveRadius)
             {
+                brain.HasDesiredYaw = false;
                 if (brain.NextDecisionTick <= now)
                 {
                     brain.NextDecisionTick = now + _rand.Next(250, 600);
@@ -108,18 +124,13 @@ namespace InfServer.Game
                 return true;
             }
 
-            int targetYaw = (int)(Math.Atan2(dy, dx) * (20.0 / Math.PI));
-            if (targetYaw < 0)
-                targetYaw += 40;
-            byte desiredYaw = (byte)(targetYaw % 40);
+            double bearingDeg = Helpers.calculateDegreesBetweenPoints(
+                bot._state.positionX, bot._state.positionY,
+                _botSkirmishObjectiveX, _botSkirmishObjectiveY);
+            byte desiredYaw = (byte)(((int)Math.Round(bearingDeg)) % 240);
 
-            if (bot._state.yaw != desiredYaw)
-            {
-                if (((byte)(desiredYaw - bot._state.yaw)) < 128)
-                    bot._movement.rotateRight();
-                else
-                    bot._movement.rotateLeft();
-            }
+            if ((bot._state.yaw % 240) != desiredYaw)
+                rotateShortestArcToward(bot, desiredYaw);
 
             if (shouldAvoidForwardTerrain(bot))
             {
@@ -262,7 +273,7 @@ namespace InfServer.Game
                 else if (now - brain.LastMoveTick > 1800)
                 {
                     brain.HasDesiredYaw = true;
-                    brain.DesiredYaw = (byte)_rand.Next(0, 255);
+                    brain.DesiredYaw = (byte)_rand.Next(0, 240);
                     brain.LastMoveTick = now;
                 }
 
@@ -285,17 +296,15 @@ namespace InfServer.Game
                     {
                         brain.NextDecisionTick = now + _rand.Next(350, 900);
                         brain.HasDesiredYaw = true;
-                        brain.DesiredYaw = (byte)_rand.Next(0, 255);
+                        brain.DesiredYaw = (byte)_rand.Next(0, 240);
                     }
 
                     if (brain.HasDesiredYaw)
                     {
-                        if (bot._state.yaw == brain.DesiredYaw)
+                        if ((bot._state.yaw % 240) == (brain.DesiredYaw % 240))
                             brain.HasDesiredYaw = false;
-                        else if (((byte)(brain.DesiredYaw - bot._state.yaw)) < 128)
-                            bot._movement.rotateRight();
                         else
-                            bot._movement.rotateLeft();
+                            rotateShortestArcToward(bot, brain.DesiredYaw);
                     }
 
                     if (_rand.Next(0, 100) < 65)
@@ -325,10 +334,14 @@ namespace InfServer.Game
                 if (aimed && bot._weapon.ableToFire() && brain.NextFireTick <= now)
                 {
                     int jitter = _rand.Next(-_botSkirmishAimJitter, _botSkirmishAimJitter + 1);
-                    byte shotYaw = (byte)(bot._state.yaw + jitter);
+                    int shot = (bot._state.yaw + jitter) % 240;
+                    if (shot < 0)
+                        shot += 240;
+                    byte shotYaw = (byte)shot;
                     bot._itemUseID = bot._weapon.ItemID;
                     bot._weapon.shotFired();
                     bot._state.yaw = shotYaw;
+                    bot._movement.stopRotating();
                     brain.NextFireTick = now + _botSkirmishReactionDelayMs;
                 }
             }
@@ -375,11 +388,19 @@ namespace InfServer.Game
                 return false;
 
             double distance = Helpers.distanceTo(bot._state, leader._state);
-            if (distance > _botSkirmishAttachDistance && brain.NextAttachTick <= now)
+
+            bool enemyNearby = getPlayersInRange(bot._state.positionX, bot._state.positionY, _botSkirmishDetectRange, true)
+                .Any(p => p != null && !p.IsDead && p._team != bot._team);
+
+            if (distance > _botSkirmishAttachDistance && brain.NextAttachTick <= now && !enemyNearby)
             {
-                Helpers.ObjectState attach = bot._state;
-                attach.positionX = (short)(leader._state.positionX + _rand.Next(-_botSkirmishSquadSpacing, _botSkirmishSquadSpacing + 1));
-                attach.positionY = (short)(leader._state.positionY + _rand.Next(-_botSkirmishSquadSpacing, _botSkirmishSquadSpacing + 1));
+                Helpers.ObjectState attach = new Helpers.ObjectState
+                {
+                    positionX = (short)(leader._state.positionX + _rand.Next(-_botSkirmishSquadSpacing, _botSkirmishSquadSpacing + 1)),
+                    positionY = (short)(leader._state.positionY + _rand.Next(-_botSkirmishSquadSpacing, _botSkirmishSquadSpacing + 1)),
+                    positionZ = bot._state.positionZ,
+                    yaw = bot._state.yaw
+                };
                 if (!isBlockedAt(attach.positionX, attach.positionY))
                 {
                     bot._movement.warp(attach);
@@ -393,11 +414,11 @@ namespace InfServer.Game
 
             if (distance > _botSkirmishSquadSpacing)
             {
-                bool shouldTurnRight = (byte)(leader._state.yaw - bot._state.yaw) < 128;
-                if (shouldTurnRight)
-                    bot._movement.rotateRight();
-                else
-                    bot._movement.rotateLeft();
+                double bearingDeg = Helpers.calculateDegreesBetweenPoints(
+                    bot._state.positionX, bot._state.positionY,
+                    leader._state.positionX, leader._state.positionY);
+                byte bearingYaw = (byte)(((int)Math.Round(bearingDeg)) % 240);
+                rotateShortestArcToward(bot, bearingYaw);
 
                 if (!shouldAvoidForwardTerrain(bot))
                     bot._movement.thrustForward();

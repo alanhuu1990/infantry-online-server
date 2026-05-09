@@ -181,6 +181,8 @@ namespace InfServer.Scripting
 				if (nsParts.Length < 3)
 					continue;
 				string invokerName = nsParts[2];
+				if (string.IsNullOrEmpty(invokerName))
+					continue;
 				if (invokerName.StartsWith("GameType_", StringComparison.OrdinalIgnoreCase))
 					continue;
 				if (!autoInvokerScripts.TryGetValue(invokerName, out List<Type> bucket))
@@ -192,8 +194,23 @@ namespace InfServer.Scripting
 			}
 			foreach (KeyValuePair<string, List<Type>> kv in autoInvokerScripts)
 			{
-				if (!_invokerScripts.TryGetValue(kv.Key, out List<Type> existing) || existing == null || existing.Count == 0)
+				string existingKey = null;
+				foreach (string k in _invokerScripts.Keys)
+				{
+					if (string.Equals(k, kv.Key, StringComparison.OrdinalIgnoreCase))
+					{
+						existingKey = k;
+						break;
+					}
+				}
+				if (existingKey == null)
 					_invokerScripts[kv.Key] = kv.Value;
+				else
+				{
+					List<Type> existingList = _invokerScripts[existingKey];
+					if (existingList == null || existingList.Count == 0)
+						_invokerScripts[existingKey] = kv.Value;
+				}
 			}
 
 			//Add scripts for a purely default environment

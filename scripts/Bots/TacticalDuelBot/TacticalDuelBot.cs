@@ -36,8 +36,6 @@ namespace InfServer.Script.TacticalDuelBot
 		private int _reactionDelayMs = 280;
 		private int _aimJitter = 14;
 
-		private const double YawToRad = Math.PI / 20.0;
-
 		public bool init(IEventObject invoker)
 		{
 			_bot = invoker as Bot;
@@ -154,7 +152,10 @@ namespace InfServer.Script.TacticalDuelBot
 			if (aimed && _bot._weapon.ableToFire() && _nextFireTick <= tickCount)
 			{
 				int jitter = _rand.Next(-_aimJitter, _aimJitter + 1);
-				byte shotYaw = (byte)(_bot._state.yaw + jitter);
+				int shot = (_bot._state.yaw + jitter) % 240;
+				if (shot < 0)
+					shot += 240;
+				byte shotYaw = (byte)shot;
 				_bot._itemUseID = _bot._weapon.ItemID;
 				_bot._weapon.shotFired();
 				_bot._state.yaw = shotYaw;
@@ -205,12 +206,14 @@ namespace InfServer.Script.TacticalDuelBot
 
 		private bool shouldAvoidForwardTerrain()
 		{
-			double angle = _bot._state.yaw * YawToRad;
 			const int probeDistance = 42;
-			int probeX = _bot._state.positionX + (int)(Math.Cos(angle) * probeDistance);
-			int probeY = _bot._state.positionY + (int)(Math.Sin(angle) * probeDistance);
-			if (probeX < 0 || probeY < 0)
-				return false;
+			Vector2 forward = Vector2.createUnitVector(_bot._state.yaw);
+			int probeX = _bot._state.positionX + (int)(forward.x * probeDistance);
+			int probeY = _bot._state.positionY + (int)(forward.y * probeDistance);
+			int lw = _bot._arena._levelWidth;
+			int lh = _bot._arena._levelHeight;
+			if (probeX < 16 || probeY < 16 || probeX >= (lw * 16) - 16 || probeY >= (lh * 16) - 16)
+				return true;
 			return _bot._arena.getTile(probeX, probeY).Blocked;
 		}
 
